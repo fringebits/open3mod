@@ -41,13 +41,13 @@ namespace AssimpNet.Interop.Generator {
             if(args.Length == 0)
                 return;
 
-            String filePath = args[0];
+            var filePath = args[0];
             filePath = Path.GetFullPath(filePath);
 
             if(!File.Exists(filePath))
                 return;
 
-            String keyFilePath = null;
+            string keyFilePath = null;
 
             if(args.Length > 1) {
                 keyFilePath = args[1];
@@ -59,53 +59,67 @@ namespace AssimpNet.Interop.Generator {
             GenerateInterop(filePath, keyFilePath);
         }
 
-        private static void GenerateInterop(String filePath, String keyFilePath) {
-            Console.WriteLine("Generating Interop...");
+        private static void GenerateInterop(string filePath, string keyFilePath)
+        {
+            Console.WriteLine($"Generating Interop... {filePath}, {keyFilePath}");
 
-            String pdbFile = Path.Combine(Path.GetDirectoryName(filePath), Path.GetFileNameWithoutExtension(filePath) + ".pdb");
+            var pdbFile = Path.Combine(Path.GetDirectoryName(filePath), Path.GetFileNameWithoutExtension(filePath) + ".pdb");
 
-            ReaderParameters readerParams = new ReaderParameters();
-            WriterParameters writerParams = new WriterParameters();
+            var readerParams = new ReaderParameters();
+            var writerParams = new WriterParameters();
 
-            if(keyFilePath != null)
+            if (keyFilePath != null)
+            {
                 writerParams.StrongNameKeyPair = new StrongNameKeyPair(File.Open(keyFilePath, FileMode.Open));
-
-            if(File.Exists(pdbFile)) {
-                readerParams.SymbolReaderProvider = new PdbReaderProvider();
-                readerParams.ReadSymbols = true;
-                writerParams.WriteSymbols = true;
             }
 
-            AssemblyDefinition assemblyDef = AssemblyDefinition.ReadAssembly(filePath, readerParams);
+            //if (File.Exists(pdbFile))
+            //{
+            //    readerParams.SymbolReaderProvider = new PdbReaderProvider();
+            //    readerParams.ReadSymbols = true;
+            //    writerParams.WriteSymbols = true;
+            //}
+
+            var assemblyDef = AssemblyDefinition.ReadAssembly(filePath, readerParams);
             ((BaseAssemblyResolver) assemblyDef.MainModule.AssemblyResolver).AddSearchDirectory(Path.GetDirectoryName(filePath));
 
             AssemblyDefinition mscorLib = null;
-            foreach(AssemblyNameReference assemblyNameReference in assemblyDef.MainModule.AssemblyReferences) {
-                if(assemblyNameReference.Name.ToLower() == "mscorlib") {
+            foreach (var assemblyNameReference in assemblyDef.MainModule.AssemblyReferences)
+            {
+                Console.WriteLine($"Assembly: {assemblyNameReference.Name}");
+                if (assemblyNameReference.Name.ToLower() == "mscorlib")
+                {
                     mscorLib = assemblyDef.MainModule.AssemblyResolver.Resolve(assemblyNameReference);
                     break;
-                } else if(assemblyNameReference.Name == "System.Runtime") {
+                }
+
+                if (assemblyNameReference.Name == "System.Runtime")
+                {
                     ((BaseAssemblyResolver) assemblyDef.MainModule.AssemblyResolver).AddSearchDirectory(Path.Combine(GetProgramFilesFolder(), @"Reference Assemblies\Microsoft\Framework\.NETCore\v4.5"));
                     mscorLib = assemblyDef.MainModule.AssemblyResolver.Resolve(assemblyNameReference);
                     break;
                 }
             }
 
-            if(mscorLib == null)
+            if (mscorLib == null)
+            {
                 throw new InvalidOperationException("Missing mscorlib.dll");
+            }
 
             m_mscorLib = mscorLib;
 
-            for(int i = 0; i < assemblyDef.CustomAttributes.Count; i++) {
-                CustomAttribute attr = assemblyDef.CustomAttributes[i];
-                if(attr.AttributeType.FullName == typeof(System.Runtime.CompilerServices.CompilationRelaxationsAttribute).FullName) {
+            for(var i = 0; i < assemblyDef.CustomAttributes.Count; i++)
+            {
+                var attr = assemblyDef.CustomAttributes[i];
+                if (attr.AttributeType.FullName == typeof(System.Runtime.CompilerServices.CompilationRelaxationsAttribute).FullName)
+                {
                     assemblyDef.CustomAttributes.RemoveAt(i);
                     i--;
                 }
 
             }
 
-            foreach(TypeDefinition typeDef in assemblyDef.MainModule.Types) {
+            foreach(var typeDef in assemblyDef.MainModule.Types) {
                 PatchType(typeDef);
             }
 
@@ -116,45 +130,59 @@ namespace AssimpNet.Interop.Generator {
             Console.WriteLine("Interop Generation complete.");
         }
 
-        private static String GetProgramFilesFolder() {
-            if(IntPtr.Size == 8 || !String.IsNullOrEmpty(Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432"))) {
+        private static string GetProgramFilesFolder()
+        {
+            if (IntPtr.Size == 8 || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432")))
+            {
                 return Environment.GetEnvironmentVariable("ProgramFiles(x86)");
             }
 
             return Environment.GetEnvironmentVariable("ProgramFiles");
         }
 
-        private static MethodDefinition FindMethod(TypeDefinition typeDef, String fullName) {
-            foreach(MethodDefinition method in typeDef.Methods) {
-                if(method.FullName.Equals(fullName))
+        private static MethodDefinition FindMethod(TypeDefinition typeDef, string fullName)
+        {
+            foreach(var method in typeDef.Methods)
+            {
+                if (method.FullName.Equals(fullName))
+                {
                     return method;
+                }
             }
 
             return null;
         }
 
-        private static void PatchType(TypeDefinition typeDef) {
-            foreach(MethodDefinition method in typeDef.Methods) {
+        private static void PatchType(TypeDefinition typeDef)
+        {
+            foreach(var method in typeDef.Methods)
+            {
                 PatchMethod(method);
             }
 
-            foreach(TypeDefinition nestedTypeDef in typeDef.NestedTypes) {
+            foreach(var nestedTypeDef in typeDef.NestedTypes)
+            {
                 PatchType(nestedTypeDef);
             }
         }
 
-        private static void PatchMethod(MethodDefinition method) {
-            if(method.HasBody) {
-                ILProcessor ilGen = method.Body.GetILProcessor();
-                Collection<Instruction> instructions = method.Body.Instructions;
+        private static void PatchMethod(MethodDefinition method)
+        {
+            if (method.HasBody)
+            {
+                var ilGen = method.Body.GetILProcessor();
+                var instructions = method.Body.Instructions;
 
-                for(int i = 0; i < instructions.Count; i++) {
-                    Instruction currInstruction = instructions[i];
+                for(var i = 0; i < instructions.Count; i++)
+                {
+                    var currInstruction = instructions[i];
 
-                    if(currInstruction.OpCode == OpCodes.Call && currInstruction.Operand is MethodReference) {
-                        MethodReference methodDescr = (MethodReference) currInstruction.Operand;
+                    if (currInstruction.OpCode == OpCodes.Call && currInstruction.Operand is MethodReference)
+                    {
+                        var methodDescr = (MethodReference) currInstruction.Operand;
 
-                        if(methodDescr.DeclaringType.Name.Equals("InternalInterop")) {
+                        if (methodDescr.DeclaringType.Name.Equals("InternalInterop"))
+                        {
                             if(methodDescr.Name.StartsWith("SizeOfInline")) {
                                 ReplaceSizeOfStructGeneric(methodDescr, ilGen, currInstruction);
                             } else if(methodDescr.Name.StartsWith("MemCopyInline")) {
@@ -179,25 +207,25 @@ namespace AssimpNet.Interop.Generator {
         }
 
         private static void ReplaceReadInline(MethodReference methodDescr, ILProcessor ilGen, Instruction instructionToPatch) {
-            TypeReference paramT = ((GenericInstanceMethod) instructionToPatch.Operand).GenericArguments[0];
-            Instruction newInstruction = ilGen.Create(OpCodes.Ldobj, paramT);
+            var paramT = ((GenericInstanceMethod) instructionToPatch.Operand).GenericArguments[0];
+            var newInstruction = ilGen.Create(OpCodes.Ldobj, paramT);
             ilGen.Replace(instructionToPatch, newInstruction);
         }
 
         private static void ReplaceWriteInline(MethodReference methodDescr, ILProcessor ilGen, Instruction instructionToPatch) {
-            TypeReference paramT = ((GenericInstanceMethod) instructionToPatch.Operand).GenericArguments[0];
-            Instruction newInstruction = ilGen.Create(OpCodes.Cpobj, paramT);
+            var paramT = ((GenericInstanceMethod) instructionToPatch.Operand).GenericArguments[0];
+            var newInstruction = ilGen.Create(OpCodes.Cpobj, paramT);
             ilGen.Replace(instructionToPatch, newInstruction);
         }
 
         private static void ReplaceSizeOfStructGeneric(MethodReference methodDescr, ILProcessor ilGen, Instruction instructionToPatch) {
-            TypeReference paramT = ((GenericInstanceMethod) instructionToPatch.Operand).GenericArguments[0];
-            Instruction newInstruction = ilGen.Create(OpCodes.Sizeof, paramT);
+            var paramT = ((GenericInstanceMethod) instructionToPatch.Operand).GenericArguments[0];
+            var newInstruction = ilGen.Create(OpCodes.Sizeof, paramT);
             ilGen.Replace(instructionToPatch, newInstruction);
         }
 
         private static void ReplaceMemCopyInline(MethodReference methodDescr, ILProcessor ilGen, Instruction instructionToPatch) {
-            List<Instruction> instructions = new List<Instruction>();
+            var instructions = new List<Instruction>();
             instructions.Add(ilGen.Create(OpCodes.Unaligned, (byte) 1));
             instructions.Add(ilGen.Create(OpCodes.Cpblk));
 
@@ -205,7 +233,7 @@ namespace AssimpNet.Interop.Generator {
         }
 
         private static void ReplaceMemSetInline(MethodReference methodDescr, ILProcessor ilGen, Instruction instructionToPatch) {
-            List<Instruction> instructions = new List<Instruction>();
+            var instructions = new List<Instruction>();
             instructions.Add(Instruction.Create(OpCodes.Unaligned, (byte) 1));
             instructions.Add(Instruction.Create(OpCodes.Initblk));
 
@@ -213,9 +241,9 @@ namespace AssimpNet.Interop.Generator {
         }
 
         private static void Inject(ILProcessor ilGen, IEnumerable<Instruction> instructions, Instruction instructionToReplace) {
-            Instruction prevInstruction = instructionToReplace;
+            var prevInstruction = instructionToReplace;
 
-            foreach(Instruction currInstruction in instructions) {
+            foreach(var currInstruction in instructions) {
                 ilGen.InsertAfter(prevInstruction, currInstruction);
                 prevInstruction = currInstruction;
             }
@@ -226,7 +254,7 @@ namespace AssimpNet.Interop.Generator {
         private static void RemoveInteropClass(AssemblyDefinition assemblyDef) {
             TypeDefinition interopType = null;
 
-            foreach(TypeDefinition typeDef in assemblyDef.MainModule.Types) {
+            foreach(var typeDef in assemblyDef.MainModule.Types) {
                 if(typeDef.Name.StartsWith("InternalInterop")) {
                     interopType = typeDef;
                     break;
@@ -246,13 +274,13 @@ namespace AssimpNet.Interop.Generator {
         /// <param name="method">Method which will have its body replaced</param>
         private static unsafe void CreateWriteArrayMethod(MethodDefinition method) {
             //Make sure we import IntPtr::op_explicit(void*)
-            MethodInfo opExplicitInfo = typeof(IntPtr).GetMethod("op_Explicit", new Type[] { typeof(void*) });
-            MethodReference opExplicitRef = method.Module.Import(opExplicitInfo);
+            var opExplicitInfo = typeof(IntPtr).GetMethod("op_Explicit", new Type[] { typeof(void*) });
+            var opExplicitRef = method.Module.Import(opExplicitInfo);
 
             method.Body.Instructions.Clear();
             method.Body.InitLocals = true;
 
-            ILProcessor ilGen = method.Body.GetILProcessor();
+            var ilGen = method.Body.GetILProcessor();
             TypeReference paramT = method.GenericParameters[0];
 
             //local(0) Pinned T
@@ -294,13 +322,13 @@ namespace AssimpNet.Interop.Generator {
         /// <param name="method">Method which will have its body replaced</param>
         private static unsafe void CreateReadArrayMethod(MethodDefinition method) {
             //Make sure we import IntPtr::op_explicit(void*)
-            MethodInfo opExplicitInfo = typeof(IntPtr).GetMethod("op_Explicit", new Type[] { typeof(void*) });
-            MethodReference opExplicitRef = method.Module.Import(opExplicitInfo);
+            var opExplicitInfo = typeof(IntPtr).GetMethod("op_Explicit", new Type[] { typeof(void*) });
+            var opExplicitRef = method.Module.Import(opExplicitInfo);
 
             method.Body.Instructions.Clear();
             method.Body.InitLocals = true;
 
-            ILProcessor ilGen = method.Body.GetILProcessor();
+            var ilGen = method.Body.GetILProcessor();
             TypeReference paramT = method.GenericParameters[0];
 
             //local(0) Pinned T
